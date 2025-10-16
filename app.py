@@ -11,9 +11,9 @@ def load_data_and_engineer_features(file_path):
         df = pd.read_csv(file_path)
     except FileNotFoundError:
         st.error(f"Error: File not found at {file_path}. Please check the path.")
-        return pd.DataFrame() # Return empty DataFrame on error
+        return pd.DataFrame()
 
-    df = pd.read_csv(file_path) # Assume file load succeeds from here
+    df = pd.read_csv(file_path)
     df['Cuisine_List'] = df['Cuisine'].str.lower().str.replace(' ', '').str.split(',')
 
     # Trust Score
@@ -61,35 +61,41 @@ def load_data_and_engineer_features(file_path):
     
     return df
 
-# --- 2. MASTER RECOMMENDATION FUNCTION (The Engine - MODIFIED for City Filter) ---
+# --- 2. MASTER RECOMMENDATION FUNCTION (MODIFIED for Cuisine Filter) ---
 
-def recommend_restaurant(df, user_city, user_mood, user_health, user_tourist, top_n=5):
+def recommend_restaurant(df, user_city, user_cuisine, user_mood, user_health, user_tourist, top_n=5):
     filtered_df = df.copy()
 
-    # 1. Apply CITY Filter (New primary location filter)
+    # 1. Apply CITY Filter
     if user_city != "All Cities":
         filtered_df = filtered_df[filtered_df['City'] == user_city]
 
-    # 2. Apply Mood Filter
+    # 2. Apply CUISINE Filter (NEW FILTER)
+    if user_cuisine != "Any Cuisine":
+        # The filter checks if the user_cuisine string is contained in the Cuisine column (after cleaning)
+        cuisine_filter = user_cuisine.lower().replace(' ', '')
+        filtered_df = filtered_df[filtered_df['Cuisine_List'].apply(lambda x: cuisine_filter in x)]
+
+    # 3. Apply Mood Filter
     if user_mood == "Fine Dining":
         filtered_df = filtered_df[filtered_df['Mood_Score'] >= 2]
     elif user_mood == "Casual":
         filtered_df = filtered_df[filtered_df['Mood_Score'] <= 0]
 
-    # 3. Apply Health Filter
+    # 4. Apply Health Filter
     if user_health == "Healthy":
         filtered_df = filtered_df[filtered_df['Health_Score'] >= 1]
     elif user_health == "Indulgent":
         filtered_df = filtered_df[filtered_df['Health_Score'] <= -1]
 
-    # 4. Apply Tourist Filter (Now filters LOCATIONS *within* the selected City)
+    # 5. Apply Tourist Filter
     if user_tourist:
         filtered_df = filtered_df[filtered_df['Tourist_Relevance'] == 1]
 
     if filtered_df.empty:
         return None
 
-    # 5. Final Ranking by Trustworthiness (Trust_Score)
+    # 6. Final Ranking by Trustworthiness (Trust_Score)
     recommendations = filtered_df.sort_values(by='Trust_Score', ascending=False)
     
     return recommendations[['Name', 'City', 'Cuisine', 'Cost', 'Trust_Score']].head(top_n)
@@ -100,48 +106,54 @@ def recommend_restaurant(df, user_city, user_mood, user_health, user_tourist, to
 df_restaurants = load_data_and_engineer_features("restaurants.csv")
 
 st.title("🍽️ Multi-Factor Restaurant Recommender")
-st.markdown("Use the filters below to get recommendations based on **Health**, **Mood**, and **Location**, ranked by a robust **Trust Score**.")
+st.markdown("Use the filters below to get recommendations based on **Cuisine**, **Health**, **Mood**, and **Location**, ranked by a robust **Trust Score**.")
 
 if not df_restaurants.empty:
     
-    # Get unique cities for the dropdown
+    # Get unique options for filters
     city_options = ["All Cities"] + sorted(df_restaurants['City'].unique().tolist())
+    
+    # Get the 10 most common cuisine categories plus "Any"
+    all_cuisines = [item for sublist in df_restaurants['Cuisine_List'] for item in sublist]
+    cuisine_counts = pd.Series(all_cuisines).value_counts()
+    
+    # Select the top N most common cuisines
+    top_n_cuisines = cuisine_counts.head(10).index.tolist()
+    
+    # Clean up the names for the user interface
+    ui_cuisines = [c.replace('indian', ' Indian').title().strip() for c in top_n_cuisines]
+    cuisine_options = ["Any Cuisine"] + ui_cuisines
+    
     
     # Sidebar for Filters (User Input)
     st.sidebar.header("Your Preferences")
     
-    # 1. City Location Filter (NEW)
-    city_choice = st.sidebar.selectbox(
-        "Select City:",
-        city_options,
-        index=0
-    )
-
-    # 2. Tourist Filter (Refined Location)
+    # 1. Location Filters
+    city_choice = st.sidebar.selectbox("Select City:", city_options, index=0)
     tourist_choice = st.sidebar.checkbox("Focus on Tourist/Major Localities?", value=False)
     
     st.sidebar.markdown("---")
     
-    # 3. Mood Filter
-    mood_choice = st.sidebar.selectbox(
-        "Mood/Ambiance:",
-        ["Any", "Casual", "Fine Dining"],
+    # 2. Menu/Cuisine Category Filter (NEW)
+    cuisine_choice = st.sidebar.selectbox(
+        "Menu/Cuisine Category:",
+        cuisine_options,
         index=0
     )
-
-    # 4. Health Filter
-    health_choice = st.sidebar.selectbox(
-        "Health Focus:",
-        ["Any", "Healthy", "Indulgent"],
-        index=0
-    )
+    
+    st.sidebar.markdown("---")
+    
+    # 3. User Intent Filters (Mood/Health)
+    mood_choice = st.sidebar.selectbox("Mood/Ambiance:", ["Any", "Casual", "Fine Dining"], index=0)
+    health_choice = st.sidebar.selectbox("Health Focus:", ["Any", "Healthy", "Indulgent"], index=0)
     
     st.sidebar.markdown("---")
 
     # Run the recommendation engine
     results = recommend_restaurant(
         df_restaurants, 
-        user_city=city_choice, # Pass the new argument
+        user_city=city_choice, 
+        user_cuisine=cuisine_choice, # Pass the new argument
         user_mood=mood_choice, 
         user_health=health_choice, 
         user_tourist=tourist_choice
@@ -157,6 +169,5 @@ if not df_restaurants.empty:
         st.subheader("Trustworthiness: Reliable Recommendations Only")
         max_trust = results['Trust_Score'].iloc[0]
         st.metric(label="Highest Trust Score in Results", value=f"{max_trust:.2f} ⭐", delta="Reliability Vetted")
-        st.caption("The Trust Score is a weighted rating that ensures recommendations are based on high-volume, reliable votes.")
     else:
-        st.warning(f"Sorry, no restaurants matched ALL your criteria in **{city_choice}**. Try broadening your search.")
+        st.warning(f"Sorry, no restaurants matched ALL your selected criteria.")
