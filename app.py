@@ -1,4 +1,8 @@
-# --- 1. DATA LOADING AND FEATURE ENGINEERING (UPDATED) ---
+import streamlit as st
+import pandas as pd
+import numpy as np
+
+# --- 1. DATA LOADING AND FEATURE ENGINEERING (Your Core Logic - UNCHANGED) ---
 
 @st.cache_data
 def load_data_and_engineer_features(file_path):
@@ -12,7 +16,7 @@ def load_data_and_engineer_features(file_path):
     df = pd.read_csv(file_path)
     df['Cuisine_List'] = df['Cuisine'].str.lower().str.replace(' ', '').str.split(',')
 
-    # Trust Score calculation remains the same
+    # Trust Score
     C = df['Rating'].mean()
     m = df['Votes'].quantile(0.8)
     def weighted_rating(df, m, C):
@@ -21,11 +25,9 @@ def load_data_and_engineer_features(file_path):
         return (v / (v + m) * R) + (m / (v + m) * C)
     df['Trust_Score'] = df.apply(weighted_rating, args=(m, C), axis=1)
 
-    # --- UPDATED Health Score Cuisines (Broader) ---
-    # Included Continental and Thai as proxy healthy options for better results
-    HEALTHY_CUISINES = ['salad', 'healthfood', 'vegan', 'smoothies', 'glutenfree', 'juices', 'healthyeats', 'health', 'continental', 'thai', 'vietnamese']
+    # Health Score
+    HEALTHY_CUISINES = ['salad', 'healthfood', 'vegan', 'smoothies', 'glutenfree', 'juices', 'healthyeats', 'health']
     UNHEALTHY_CUISINES = ['desserts', 'icecream', 'fastfood', 'pizza', 'burger', 'bakery', 'streetfood']
-    
     def calculate_health_score(cuisine_list):
         score = 0
         for cuisine in cuisine_list:
@@ -34,7 +36,7 @@ def load_data_and_engineer_features(file_path):
         return score
     df['Health_Score'] = df['Cuisine_List'].apply(calculate_health_score)
 
-    # Mood Score calculation remains the same
+    # Mood Score
     median_cost = df['Cost'].median()
     FINE_DINING_CUISINES = ['continental', 'italian', 'seafood', 'european', 'french', 'mediterranean']
     CASUAL_CUISINES = ['cafe', 'fingerfood', 'northindian', 'chinese', 'mughlai']
@@ -48,7 +50,7 @@ def load_data_and_engineer_features(file_path):
         return score
     df['Mood_Score'] = df.apply(calculate_mood_score, axis=1)
 
-    # Tourist Relevance calculation remains the same
+    # Tourist Relevance
     TOURIST_LOCALITIES = ['centraldelhi', 'connaughtplace', 'sarabhanagar', 'sector17']
     def calculate_tourist_relevance(df):
         locality = df['Locality'].str.lower().str.replace(' ', '')
@@ -59,7 +61,7 @@ def load_data_and_engineer_features(file_path):
     
     return df
 
-# --- 2. MASTER RECOMMENDATION FUNCTION (UPDATED) ---
+# --- 2. MASTER RECOMMENDATION FUNCTION (MODIFIED for Cuisine Filter) ---
 
 def recommend_restaurant(df, user_city, user_cuisine, user_mood, user_health, user_tourist, top_n=5):
     filtered_df = df.copy()
@@ -68,44 +70,104 @@ def recommend_restaurant(df, user_city, user_cuisine, user_mood, user_health, us
     if user_city != "All Cities":
         filtered_df = filtered_df[filtered_df['City'] == user_city]
 
-    # 2. Apply CUISINE Filter
+    # 2. Apply CUISINE Filter (NEW FILTER)
     if user_cuisine != "Any Cuisine":
+        # The filter checks if the user_cuisine string is contained in the Cuisine column (after cleaning)
         cuisine_filter = user_cuisine.lower().replace(' ', '')
         filtered_df = filtered_df[filtered_df['Cuisine_List'].apply(lambda x: cuisine_filter in x)]
 
-    # 3. Apply Mood Filter (Broadened Casual definition)
+    # 3. Apply Mood Filter
     if user_mood == "Fine Dining":
-        # Target restaurants with high Mood_Score (>= 2 is strongly Fine Dining)
         filtered_df = filtered_df[filtered_df['Mood_Score'] >= 2]
     elif user_mood == "Casual":
-        # Target restaurants that are not explicitly fine dining (Mood_Score <= 1)
-        filtered_df = filtered_df[filtered_df['Mood_Score'] <= 1]
+        filtered_df = filtered_df[filtered_df['Mood_Score'] <= 0]
 
     # 4. Apply Health Filter
     if user_health == "Healthy":
-        # Target restaurants with positive Health_Score
         filtered_df = filtered_df[filtered_df['Health_Score'] >= 1]
     elif user_health == "Indulgent":
-        # Target restaurants with negative Health_Score
         filtered_df = filtered_df[filtered_df['Health_Score'] <= -1]
 
-    # 5. Check if any results remain after filtering
+    # 5. Apply Tourist Filter
+    if user_tourist:
+        filtered_df = filtered_df[filtered_df['Tourist_Relevance'] == 1]
+
     if filtered_df.empty:
         return None
 
-    # --- 6. Final Ranking (Tourist feature is now a SCORE BOOSTER) ---
+    # 6. Final Ranking by Trustworthiness (Trust_Score)
+    recommendations = filtered_df.sort_values(by='Trust_Score', ascending=False)
     
-    # Calculate Final Score: Boost Trust_Score for Tourist locations if the checkbox is marked
-    if user_tourist:
-        filtered_df['Final_Score'] = filtered_df['Trust_Score'] + (filtered_df['Tourist_Relevance'] * 0.2)
-    else:
-        filtered_df['Final_Score'] = filtered_df['Trust_Score']
-
-    # Final Ranking
-    recommendations = filtered_df.sort_values(by='Final_Score', ascending=False)
-    
-    # Reformat output to show the Trust_Score (the original quality metric)
     return recommendations[['Name', 'City', 'Cuisine', 'Cost', 'Trust_Score']].head(top_n)
 
-# --- 3. STREAMLIT APP LAYOUT (Use the layout from the previous response) ---
-# Note: You must ensure the rest of your app.py layout code is present and unchanged.
+# --- 3. STREAMLIT APP LAYOUT (UPDATED) ---
+
+# Load the data once
+df_restaurants = load_data_and_engineer_features("restaurants.csv")
+
+st.title("🍽️ Multi-Factor Restaurant Recommender")
+st.markdown("Use the filters below to get recommendations based on **Cuisine**, **Health**, **Mood**, and **Location**, ranked by a robust **Trust Score**.")
+
+if not df_restaurants.empty:
+    
+    # Get unique options for filters
+    city_options = ["All Cities"] + sorted(df_restaurants['City'].unique().tolist())
+    
+    # Get the 10 most common cuisine categories plus "Any"
+    all_cuisines = [item for sublist in df_restaurants['Cuisine_List'] for item in sublist]
+    cuisine_counts = pd.Series(all_cuisines).value_counts()
+    
+    # Select the top N most common cuisines
+    top_n_cuisines = cuisine_counts.head(10).index.tolist()
+    
+    # Clean up the names for the user interface
+    ui_cuisines = [c.replace('indian', ' Indian').title().strip() for c in top_n_cuisines]
+    cuisine_options = ["Any Cuisine"] + ui_cuisines
+    
+    
+    # Sidebar for Filters (User Input)
+    st.sidebar.header("Your Preferences")
+    
+    # 1. Location Filters
+    city_choice = st.sidebar.selectbox("Select City:", city_options, index=0)
+    tourist_choice = st.sidebar.checkbox("Focus on Tourist/Major Localities?", value=False)
+    
+    st.sidebar.markdown("---")
+    
+    # 2. Menu/Cuisine Category Filter (NEW)
+    cuisine_choice = st.sidebar.selectbox(
+        "Menu/Cuisine Category:",
+        cuisine_options,
+        index=0
+    )
+    
+    st.sidebar.markdown("---")
+    
+    # 3. User Intent Filters (Mood/Health)
+    mood_choice = st.sidebar.selectbox("Mood/Ambiance:", ["Any", "Casual", "Fine Dining"], index=0)
+    health_choice = st.sidebar.selectbox("Health Focus:", ["Any", "Healthy", "Indulgent"], index=0)
+    
+    st.sidebar.markdown("---")
+
+    # Run the recommendation engine
+    results = recommend_restaurant(
+        df_restaurants, 
+        user_city=city_choice, 
+        user_cuisine=cuisine_choice, # Pass the new argument
+        user_mood=mood_choice, 
+        user_health=health_choice, 
+        user_tourist=tourist_choice
+    )
+
+    st.header("Top Recommendations")
+    
+    if results is not None:
+        st.dataframe(results, hide_index=True, use_container_width=True)
+
+        # Trustworthiness Feature Highlight
+        st.markdown("---")
+        st.subheader("Trustworthiness: Reliable Recommendations Only")
+        max_trust = results['Trust_Score'].iloc[0]
+        st.metric(label="Highest Trust Score in Results", value=f"{max_trust:.2f} ⭐", delta="Reliability Vetted")
+    else:
+        st.warning(f"Sorry, no restaurants matched ALL your selected criteria.")
