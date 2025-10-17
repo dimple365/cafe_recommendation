@@ -6,7 +6,6 @@ import seaborn as sns
 
 # Set global plotting style
 sns.set_theme(style="whitegrid")
-st.set_option('deprecation.showPyplotGlobalUse', False)
 
 # --- 1. Helper Functions ---
 
@@ -106,7 +105,6 @@ def main():
 
     # --- 4.1 Extract unique values for filters ---
     unique_localities = sorted(df['Locality'].unique().tolist())
-    # Extract unique cuisines from the pre-processed list
     all_cuisines_flat = df['Cuisine_List'].explode().dropna().unique()
     unique_cuisines = sorted(all_cuisines_flat.tolist())
     
@@ -242,6 +240,7 @@ def main():
 
         # Plot 3: Top 10 Cuisines Count
         fig3, ax3 = plt.subplots(figsize=(10, 6))
+        top_10_cuisines = df['Cuisine_List'].explode().dropna().value_counts().nlargest(10)
         top_10_cuisines.sort_values(ascending=True).plot(kind='barh', ax=ax3, color='teal')
         ax3.set_title('C. Top 10 Most Frequent Cuisines', fontsize=16)
         ax3.set_xlabel('Number of Restaurants')
